@@ -97,6 +97,7 @@ async def run(settings: Settings) -> None:
     finally:
         log.info("bot_stopping")
         await janitor.stop()
+        await runtime.reference.close()
         await runtime.bot.session.close()
         await db.close()
 

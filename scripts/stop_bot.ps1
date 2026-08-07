@@ -16,6 +16,7 @@
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $runner = Join-Path $root 'scripts\run_bot.ps1'
+$launcher = Join-Path $root 'scripts\run_hidden.vbs'
 
 function Get-BotProcesses {
     param([string]$Name, [string]$Pattern)
@@ -30,7 +31,14 @@ if ($task -and $task.State -eq 'Running') {
     Start-Sleep -Seconds 1
 }
 
-# Надзорный скрипт — первым. Признак запуска, а не любое упоминание имени файла.
+# Скрытый запускатель — первым: он ждёт надзорный скрипт и переживёт его смерть,
+# а задача планировщика останется в состоянии Running.
+foreach ($proc in Get-BotProcesses -Name 'wscript.exe' -Pattern "*$launcher*") {
+    Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
+    Write-Host "Остановлен запускатель PID $($proc.ProcessId)"
+}
+
+# Надзорный скрипт — вторым. Признак запуска, а не любое упоминание имени файла.
 foreach ($proc in Get-BotProcesses -Name 'powershell.exe' -Pattern "*-File*$runner*") {
     Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
     Write-Host "Остановлен надзорный процесс PID $($proc.ProcessId)"

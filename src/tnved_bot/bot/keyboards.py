@@ -78,6 +78,10 @@ ADM_CONFIRM_USER = "ask_user"
 ADM_REMOVE_USER = "rm_user"
 ADM_STATS = "stats"
 ADM_HEALTH = "health"
+ADM_CORRECTIONS = "fixes"
+ADM_BROADCAST = "bcast"
+ADM_BROADCAST_SEND = "bcast_go"
+ADM_RELEASE = "release"
 
 MAX_LABEL = 28
 
@@ -94,7 +98,28 @@ def admin_menu() -> InlineKeyboardMarkup:
     builder.button(text="➕ Новое приглашение", callback_data=f"{ADMIN_PREFIX}:{ADM_NEW_INVITE}:-")
     builder.button(text="📊 Статистика", callback_data=f"{ADMIN_PREFIX}:{ADM_STATS}:-")
     builder.button(text="🩺 Состояние", callback_data=f"{ADMIN_PREFIX}:{ADM_HEALTH}:-")
-    builder.adjust(2, 1, 2)
+    builder.button(text="📝 Исправления", callback_data=f"{ADMIN_PREFIX}:{ADM_CORRECTIONS}:-")
+    builder.button(text="📣 Рассылка", callback_data=f"{ADMIN_PREFIX}:{ADM_BROADCAST}:-")
+    builder.adjust(2, 1, 2, 2)
+    return builder.as_markup()
+
+
+def admin_broadcast(with_release: bool = True) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    if with_release:
+        builder.button(
+            text="🆕 Текст об обновлении", callback_data=f"{ADMIN_PREFIX}:{ADM_RELEASE}:-"
+        )
+    builder.button(text="⬅️ В меню", callback_data=f"{ADMIN_PREFIX}:{ADM_MENU}:-")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def admin_broadcast_confirm() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📣 Отправить всем", callback_data=f"{ADMIN_PREFIX}:{ADM_BROADCAST_SEND}:-")
+    builder.button(text="⬅️ Отмена", callback_data=f"{ADMIN_PREFIX}:{ADM_MENU}:-")
+    builder.adjust(1)
     return builder.as_markup()
 
 

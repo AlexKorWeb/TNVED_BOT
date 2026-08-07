@@ -12,8 +12,10 @@ $ErrorActionPreference = 'Stop'
 $taskName = 'TNVED_BOT'
 $root = Split-Path -Parent $PSScriptRoot
 $runner = Join-Path $root 'scripts\run_bot.ps1'
+$launcher = Join-Path $root 'scripts\run_hidden.vbs'
 
 if (-not (Test-Path $runner)) { Write-Error "Не найден $runner"; exit 1 }
+if (-not (Test-Path $launcher)) { Write-Error "Не найден $launcher"; exit 1 }
 
 $existing = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 if ($existing -and -not $Force) {
@@ -26,9 +28,12 @@ if ($existing) {
     Write-Host "Прежняя задача удалена."
 }
 
+# Запуск через wscript, а не напрямую через powershell: `-WindowStyle Hidden` всё равно
+# создаёт консольное окно, и при входе в систему оно мелькает (а иногда и остаётся).
+# wscript.exe окна не имеет и запускает надзорный скрипт с intWindowStyle = 0.
 $action = New-ScheduledTaskAction `
-    -Execute 'powershell.exe' `
-    -Argument "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$runner`"" `
+    -Execute 'wscript.exe' `
+    -Argument "`"$launcher`"" `
     -WorkingDirectory $root
 
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
@@ -51,7 +56,7 @@ Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
     -Settings $settings -Principal $principal `
     -Description 'Telegram-бот подбора кодов ТН ВЭД ЕАЭС' | Out-Null
 
-Write-Host "Задача '$taskName' создана: запуск при входе в систему, перезапуск 3 раза с интервалом 1 мин."
+Write-Host "Задача '$taskName' создана: запуск при входе в систему, без консольного окна."
 Write-Host ""
 Write-Host "Запустить сейчас:      Start-ScheduledTask -TaskName $taskName"
 Write-Host "Проверить состояние:   Get-ScheduledTask -TaskName $taskName | Get-ScheduledTaskInfo"

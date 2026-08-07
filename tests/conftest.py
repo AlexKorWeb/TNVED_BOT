@@ -26,6 +26,10 @@ def env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, str]:
         "NOMENCLATURE_DIR": str(tmp_path / "nomenclature"),
         "BACKUP_DIR": str(tmp_path / "backups"),
         "LOG_DIR": str(tmp_path / "logs"),
+        # Тесты не ходят в сеть. Без этого сборка бота создала бы настоящий HTTP-клиент,
+        # и первый же ответ с кодом полез бы на ifcg.ru — за справкой, которую тест не
+        # проверяет. Кто проверяет справку, подставляет фейковый клиент явно.
+        "REFERENCE_ENABLED": "false",
     }
     for key, value in values.items():
         monkeypatch.setenv(key, value)

@@ -11,6 +11,7 @@ from aiogram.types import Message
 from tnved_bot import __version__
 from tnved_bot.bot import keyboards, texts
 from tnved_bot.core.models import Candidate
+from tnved_bot.core.reference import ReferenceService
 from tnved_bot.db.audit import AuditLog
 from tnved_bot.db.nomenclature import NomenclatureRepository, format_code, normalize_code
 from tnved_bot.db.photos import PhotoRepository
@@ -93,7 +94,10 @@ async def cmd_version(message: Message, nomenclature: NomenclatureRepository) ->
 
 
 async def cmd_code(
-    message: Message, command: CommandObject, nomenclature: NomenclatureRepository
+    message: Message,
+    command: CommandObject,
+    nomenclature: NomenclatureRepository,
+    reference: ReferenceService | None = None,
 ) -> None:
     raw = (command.args or "").strip()
     normalized = normalize_code(raw)
@@ -107,7 +111,8 @@ async def cmd_code(
         return
     await message.answer(
         texts.code_info(
-            Candidate(code=row.code, name=row.name, name_full=row.name_full, tariff=row.tariff)
+            Candidate(code=row.code, name=row.name, name_full=row.name_full, tariff=row.tariff),
+            await reference.get(row.code) if reference else None,
         )
     )
 
@@ -217,7 +222,11 @@ async def cmd_invite(
         return
     note = (command.args or "").strip() or None
     code = await users.create_invite(user_id, note, invite_ttl_hours)
-    await message.answer(texts.invite_created(code, invite_ttl_hours, await _username(message.bot)))
+    username = await _username(message.bot)
+    await message.answer(texts.invite_created(code, invite_ttl_hours, username))
+    # Второе сообщение — то самое, которое пересылают человеку: ссылка вместо кода,
+    # которую он раньше вбивал руками.
+    await message.answer(texts.invite_share(code, username))
 
 
 async def _username(bot: object) -> str | None:

@@ -10,13 +10,15 @@
 
 from __future__ import annotations
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
+from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
-from tnved_bot.bot import keyboards, texts
+from tnved_bot.bot import broadcast, keyboards, texts
 from tnved_bot.clock import iso_ago
 from tnved_bot.db.audit import AuditLog
+from tnved_bot.db.corrections import CorrectionRepository
 from tnved_bot.db.nomenclature import NomenclatureRepository
 from tnved_bot.db.sessions import SessionRepository
 from tnved_bot.db.users import UserRepository
@@ -26,6 +28,8 @@ from tnved_bot.logging_setup import get_logger
 log = get_logger(__name__)
 
 MAX_LISTED = 20
+AWAITING = ""
+"""Пустая строка в черновике — «ждём текст рассылки», а не «текст пустой»."""
 
 
 async def cmd_admin(
@@ -37,7 +41,7 @@ async def cmd_admin(
     await message.answer(await _menu_text(users, audit), reply_markup=keyboards.admin_menu())
 
 
-async def handle_admin_callback(
+async def handle_admin_callback(  # noqa: PLR0913 — панель связывает много репозиториев
     callback: CallbackQuery,
     user_id: int,
     is_admin: bool,
@@ -45,10 +49,12 @@ async def handle_admin_callback(
     sessions: SessionRepository,
     audit: AuditLog,
     nomenclature: NomenclatureRepository,
+    corrections: CorrectionRepository,
     llm: LlmClient,
     admins: frozenset[int],
     invite_ttl_hours: int,
     db_path_parent: str,
+    broadcast_drafts: dict[int, str],
 ) -> None:
     parsed = keyboards.parse_admin_callback(callback.data)
     if parsed is None:
@@ -97,6 +103,24 @@ async def handle_admin_callback(
             await texts.health_text(nomenclature, llm, db_path_parent),
             keyboards.admin_back(),
         )
+
+    elif action == keyboards.ADM_CORRECTIONS:
+        await _show(callback, await _corrections_text(corrections), keyboards.admin_back())
+
+    elif action == keyboards.ADM_BROADCAST:
+        broadcast_drafts[user_id] = AWAITING
+        await _show(callback, texts.BROADCAST_PROMPT, keyboards.admin_broadcast())
+
+    elif action == keyboards.ADM_RELEASE:
+        broadcast_drafts[user_id] = texts.RELEASE_NOTE
+        await _show(
+            callback,
+            texts.broadcast_preview(texts.RELEASE_NOTE, len(await users.list_users())),
+            keyboards.admin_broadcast_confirm(),
+        )
+
+    elif action == keyboards.ADM_BROADCAST_SEND:
+        await _send_broadcast(callback, user_id, users, broadcast_drafts)
 
 
 # ---------------------------------------------------------------- экраны
@@ -185,10 +209,65 @@ async def _new_invite(
 ) -> None:
     code = await users.create_invite(user_id, note=None, ttl_hours=ttl_hours)
     username = await _username(callback.bot)
-    # Новым сообщением, а не правкой экрана: код нужно переслать, а перерисованная
-    # панель унесла бы его из чата при следующем нажатии.
+    # Двумя сообщениями: первое — админу (что за код, до какого времени), второе —
+    # самодостаточное приглашение со ссылкой, которое пересылается человеку как есть.
+    # Правкой экрана тут не обойтись: перерисованная панель унесла бы код из чата.
     await _notify(callback, texts.invite_created(code, ttl_hours, username))
+    await _notify(callback, texts.invite_share(code, username))
     await _show_invites(callback, users)
+
+
+async def _corrections_text(corrections: CorrectionRepository) -> str:
+    rows = await corrections.recent(MAX_LISTED)
+    return texts.corrections_list(
+        [(item.created_at, item.query, item.wrong_code or "", item.correct_code) for item in rows]
+    )
+
+
+async def _send_broadcast(
+    callback: CallbackQuery,
+    user_id: int,
+    users: UserRepository,
+    drafts: dict[int, str],
+) -> None:
+    text = drafts.pop(user_id, AWAITING)
+    if not text:
+        await _show(callback, texts.BROADCAST_PROMPT, keyboards.admin_broadcast())
+        return
+
+    bot = callback.bot
+    if not isinstance(bot, Bot):  # pragma: no cover — вне Telegram не бывает
+        return
+    recipients = [person.user_id for person in await users.list_users()]
+    result = await broadcast.send_to_all(bot, recipients, text)
+    await _show(
+        callback, texts.broadcast_report(result.sent, result.failed), keyboards.admin_back()
+    )
+
+
+async def handle_broadcast_text(
+    message: Message,
+    user_id: int,
+    is_admin: bool,
+    users: UserRepository,
+    broadcast_drafts: dict[int, str],
+) -> None:
+    """Ловит текст рассылки, набранный администратором.
+
+    Право проверяется повторно, хотя фильтр уже отсеял всех, у кого нет черновика:
+    черновик — состояние, а состояние может пережить отзыв прав.
+    """
+    if not is_admin or broadcast_drafts.get(user_id) != AWAITING:
+        raise SkipHandler
+    text = (message.text or "").strip()
+    if not text:
+        raise SkipHandler
+
+    broadcast_drafts[user_id] = text
+    await message.answer(
+        texts.broadcast_preview(text, len(await users.list_users())),
+        reply_markup=keyboards.admin_broadcast_confirm(),
+    )
 
 
 async def _stats_text(audit: AuditLog) -> str:
@@ -238,9 +317,46 @@ async def _username(bot: object) -> str | None:
     return str(me.username) if me.username else None
 
 
-def build_router() -> Router:
+async def cmd_broadcast(
+    message: Message, user_id: int, is_admin: bool, broadcast_drafts: dict[int, str]
+) -> None:
+    if not is_admin:
+        await message.answer(texts.ADMIN_ONLY)
+        return
+    broadcast_drafts[user_id] = AWAITING
+    await message.answer(texts.BROADCAST_PROMPT, reply_markup=keyboards.admin_broadcast())
+
+
+async def cmd_corrections(
+    message: Message, is_admin: bool, corrections: CorrectionRepository
+) -> None:
+    if not is_admin:
+        await message.answer(texts.ADMIN_ONLY)
+        return
+    await message.answer(await _corrections_text(corrections))
+
+
+def build_router(broadcast_drafts: dict[int, str] | None = None) -> Router:
     router = Router(name="admin")
     router.message.register(cmd_admin, Command("admin"))
+    router.message.register(cmd_broadcast, Command("broadcast"))
+    router.message.register(cmd_corrections, Command("corrections"))
+
+    drafts = broadcast_drafts if broadcast_drafts is not None else {}
+
+    def awaiting_draft(message: Message) -> bool:
+        """Ждёт ли этот пользователь ввода текста рассылки.
+
+        Проверка вынесена в фильтр, а не в тело обработчика, намеренно. Фильтры
+        отрабатывают до внутренних middleware, а `SkipHandler` из обработчика заставил бы
+        цепочку `auth → ratelimit → logging` пройти дважды на каждое сообщение
+        администратора — то есть списать с него два запроса лимита вместо одного.
+        Заполнять словарь может только админский путь, так что фильтр не даёт доступа.
+        """
+        sender = message.from_user
+        return sender is not None and drafts.get(sender.id) == AWAITING
+
+    router.message.register(handle_broadcast_text, F.text, ~F.text.startswith("/"), awaiting_draft)
     router.callback_query.register(
         handle_admin_callback, F.data.startswith(f"{keyboards.ADMIN_PREFIX}:")
     )

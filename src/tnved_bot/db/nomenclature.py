@@ -21,6 +21,7 @@ log = get_logger(__name__)
 
 _DIGITS = re.compile(r"\D")
 VALID_LEVELS = (2, 4, 6, 8, 10)
+HEADING_LEN = 4
 
 
 def normalize_code(raw: str) -> str:
@@ -198,6 +199,27 @@ class NomenclatureRepository:
             (normalized,),
         )
         return _to_row(row) if row else None
+
+    async def heading_codes(self, code: str, limit: int = 200) -> list[NomenclatureRow]:
+        """Все позиции той же товарной позиции (первые четыре знака) из активной версии.
+
+        Нужны для сравнения ставок: соседние подсубпозиции — это тот же товар, разложенный
+        по материалу и назначению, и именно там прячется разница в пошлине. Брать их из
+        результатов поиска нельзя — поиск возвращает то, что похоже на описание, а не всё,
+        что рядом по классификации.
+        """
+        heading = normalize_code(code)[:HEADING_LEN]
+        if len(heading) < HEADING_LEN:
+            return []
+        rows = await self._db.fetch_all(
+            "SELECT n.code, n.parent_code, n.level, n.name, n.name_full, n.unit, n.notes, n.tariff"
+            " FROM nomenclature n"
+            " JOIN nomenclature_version v ON v.id = n.version_id AND v.is_active = 1"
+            " WHERE n.code LIKE ? AND n.level = 10"
+            " ORDER BY n.code LIMIT ?",
+            (f"{heading}%", limit),
+        )
+        return [_to_row(row) for row in rows]
 
     async def count(self) -> int:
         row = await self._db.fetch_one(

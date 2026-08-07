@@ -50,7 +50,9 @@ async def handle_callback(
         return
 
     if action in (keyboards.FEEDBACK_GOOD, keyboards.FEEDBACK_BAD):
-        await _feedback(callback, session, audit, positive=action == keyboards.FEEDBACK_GOOD)
+        await _feedback(
+            callback, session, service, audit, positive=action == keyboards.FEEDBACK_GOOD
+        )
         return
 
     if session.state not in OPEN_STATES:
@@ -90,7 +92,12 @@ async def handle_callback(
 
 
 async def _feedback(
-    callback: CallbackQuery, session: Session, audit: AuditLog, *, positive: bool
+    callback: CallbackQuery,
+    session: Session,
+    service: DialogService,
+    audit: AuditLog,
+    *,
+    positive: bool,
 ) -> None:
     await audit.record(
         "feedback",
@@ -98,8 +105,15 @@ async def _feedback(
         payload={"positive": positive, "chapter": str(session.context.get("answer_code", ""))[:2]},
         ok=positive,
     )
-    await callback.answer("Спасибо, учту." if positive else "Спасибо, отмечу как неточный.")
+    await callback.answer("Спасибо, учту." if positive else "Спасибо.")
     await _strip_buttons(callback)
+
+    if positive:
+        return
+    # «Неверно» без продолжения — потерянная информация: бот знает, что ошибся, но не знает,
+    # в чём. Здесь и только здесь можно спросить, пока пользователь помнит свой товар.
+    await service.await_correction(session)
+    await _reply(callback, texts.CORRECTION_ASK)
 
 
 async def _strip_buttons(callback: CallbackQuery) -> None:

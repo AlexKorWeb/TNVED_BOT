@@ -22,11 +22,15 @@ from tnved_bot.bot.middlewares.ratelimit import RateLimitMiddleware
 from tnved_bot.bot.service import DialogService, DialogSettings
 from tnved_bot.config import Settings
 from tnved_bot.core.classifier import Classifier, ClassifierSettings
+from tnved_bot.core.reference import ReferenceService
+from tnved_bot.customs.ifcg import IfcgClient
 from tnved_bot.db.audit import AuditLog
+from tnved_bot.db.corrections import CorrectionRepository
 from tnved_bot.db.counters import UsageCounters
 from tnved_bot.db.engine import Database
 from tnved_bot.db.nomenclature import NomenclatureRepository
 from tnved_bot.db.photos import PhotoRepository
+from tnved_bot.db.reference import ReferenceCache
 from tnved_bot.db.search import NomenclatureSearch
 from tnved_bot.db.sessions import SessionRepository
 from tnved_bot.db.users import UserRepository
@@ -51,6 +55,7 @@ class BotRuntime:
     audit: AuditLog
     users: UserRepository
     service: DialogService
+    reference: ReferenceService
 
 
 def build(settings: Settings, db: Database) -> BotRuntime:
@@ -75,6 +80,13 @@ def build(settings: Settings, db: Database) -> BotRuntime:
         breaker_cooldown_minutes=settings.claude_breaker_cooldown_minutes,
     )
 
+    corrections = CorrectionRepository(db)
+    reference = ReferenceService(
+        ReferenceCache(db, ttl_days=settings.reference_ttl_days),
+        IfcgClient(timeout=settings.reference_timeout) if settings.reference_enabled else None,
+        enabled=settings.reference_enabled,
+    )
+
     classifier = Classifier(
         search,
         nomenclature,
@@ -85,7 +97,11 @@ def build(settings: Settings, db: Database) -> BotRuntime:
             clarify=settings.confidence_clarify,
             max_rounds=settings.max_clarify_rounds,
             timeout_text=settings.claude_timeout_text,
+            max_savings=settings.max_savings,
+            use_samples=settings.reference_samples,
         ),
+        reference=reference,
+        corrections=corrections,
     )
 
     service = DialogService(
@@ -98,11 +114,18 @@ def build(settings: Settings, db: Database) -> BotRuntime:
             accept=settings.confidence_accept,
             clarify=settings.confidence_clarify,
         ),
+        corrections=corrections,
+        nomenclature=nomenclature,
     )
 
     photo_store = PhotoStore(settings.abs_path(settings.photo_dir), settings.max_photo_mb)
     photos = PhotoRepository(db)
     vision = VisionReader(llm, timeout=settings.claude_timeout_vision)
+
+    # Черновики рассылки живут в памяти процесса: незавершённая рассылка не та вещь, ради
+    # переживания перезапуска которой стоит заводить таблицу. Тот же объект получает и
+    # роутер — его фильтр смотрит в этот словарь.
+    broadcast_drafts: dict[int, str] = {}
 
     dispatcher = Dispatcher()
     dispatcher.workflow_data.update(
@@ -115,6 +138,9 @@ def build(settings: Settings, db: Database) -> BotRuntime:
         photos=photos,
         photo_store=photo_store,
         vision=vision,
+        corrections=corrections,
+        reference=reference,
+        broadcast_drafts=broadcast_drafts,
         admins=settings.admin_user_ids,
         invite_ttl_hours=settings.invite_ttl_hours,
         photo_ttl_hours=settings.photo_ttl_hours,
@@ -143,13 +169,15 @@ def build(settings: Settings, db: Database) -> BotRuntime:
     dispatcher.errors.register(errors.handle_error)
 
     # Админский роутер — до общего обработчика кнопок: он забирает `adm:` себе.
-    dispatcher.include_router(admin.build_router())
+    dispatcher.include_router(admin.build_router(broadcast_drafts))
     dispatcher.include_router(commands.build_router())
     dispatcher.include_router(callbacks.build_router())
     dispatcher.include_router(photo.build_router())
     dispatcher.include_router(text.build_router())
 
-    return BotRuntime(bot, dispatcher, llm, sessions, nomenclature, audit, users, service)
+    return BotRuntime(
+        bot, dispatcher, llm, sessions, nomenclature, audit, users, service, reference
+    )
 
 
 USER_COMMANDS = [
@@ -164,9 +192,11 @@ USER_COMMANDS = [
 ADMIN_COMMANDS = [
     ("admin", "Панель администратора"),
     ("users", "Список пользователей"),
-    ("invite", "Код приглашения"),
+    ("invite", "Ссылка-приглашение"),
     ("adduser", "Выдать доступ по ID"),
     ("deluser", "Отозвать доступ"),
+    ("broadcast", "Рассылка пользователям"),
+    ("corrections", "Исправления пользователей"),
     ("health", "Состояние системы"),
     ("stats", "Статистика за сутки"),
 ]

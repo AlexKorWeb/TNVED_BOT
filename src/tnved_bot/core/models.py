@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from tnved_bot.customs.marking import MarkingRule
+from tnved_bot.customs.reference import CodeReference
+
 PATH_SEPARATOR = " / "
 # Сколько последних уровней пути показывать модели и пользователю.
 # Обрезать путь с начала нельзя: различающая часть находится в конце. У кода 8516 71 000 0
@@ -52,6 +55,28 @@ class CodeSuggestion:
     name_full: str
     tariff: str | None = None
     why: str = ""
+    reference: CodeReference | None = None
+    """Справка по коду. У альтернатив она нужна не меньше, чем у основного кода:
+    выбирая между вариантами, человек смотрит именно на пошлину и документы."""
+
+    marking: list[MarkingRule] = field(default_factory=list)
+
+    def to_candidate(self) -> Candidate:
+        return Candidate(
+            code=self.code, name=self.name, name_full=self.name_full, tariff=self.tariff
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class Saving:
+    """Соседний код с меньшей ставкой — как повод перепроверить классификацию.
+
+    Не рекомендация «декларируйте так»: код определяется свойствами товара.
+    """
+
+    suggestion: CodeSuggestion
+    gap: float
+    docs_free: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +92,10 @@ class Answer:
     alternatives: list[CodeSuggestion] = field(default_factory=list)
     degraded: str | None = None
     """Причина деградации: ответ получен не полным пайплайном."""
+
+    reference: CodeReference | None = None
+    marking: list[MarkingRule] = field(default_factory=list)
+    savings: list[Saving] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)

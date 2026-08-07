@@ -17,10 +17,14 @@ from tnved_bot.core.classifier import Classifier
 from tnved_bot.core.models import Answer, Clarification, NoResult, Outcome
 from tnved_bot.core.sanitize import Rejected, Sanitized, clean_user_text
 from tnved_bot.db.audit import AuditLog, text_digest
+from tnved_bot.db.corrections import CorrectionRepository
+from tnved_bot.db.nomenclature import NomenclatureRepository
 from tnved_bot.db.sessions import Session, SessionRepository
 from tnved_bot.logging_setup import get_logger
 
 log = get_logger(__name__)
+
+CODE_LENGTH = 10
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,11 +42,15 @@ class DialogService:
         sessions: SessionRepository,
         audit: AuditLog,
         settings: DialogSettings | None = None,
+        corrections: CorrectionRepository | None = None,
+        nomenclature: NomenclatureRepository | None = None,
     ) -> None:
         self._classifier = classifier
         self._sessions = sessions
         self._audit = audit
         self._settings = settings or DialogSettings()
+        self._corrections = corrections
+        self._nomenclature = nomenclature
 
     # ------------------------------------------------------------------ вход
 
@@ -56,6 +64,13 @@ class DialogService:
             return
 
         open_session = await self._sessions.find_open(user_id)
+        if open_session is not None and open_session.awaiting_correction:
+            if await self._apply_correction(message, open_session, cleaned.text, user_id):
+                return
+            # Не код — значит человек передумал исправлять и пишет новый запрос.
+            open_session.context["awaiting_correction"] = False
+            await self._sessions.save(open_session, self._settings.timeout_minutes)
+
         if open_session is not None and open_session.awaiting_custom:
             await self._continue_with_answer(message, open_session, cleaned.text)
             return
@@ -114,6 +129,52 @@ class DialogService:
     async def await_custom_answer(self, session: Session) -> None:
         session.context["awaiting_custom"] = True
         await self._sessions.save(session, self._settings.timeout_minutes)
+
+    # ------------------------------------------------------------------ исправления
+
+    async def await_correction(self, session: Session) -> None:
+        """Пользователь нажал 👎 — ждём от него верный код."""
+        session.context["awaiting_correction"] = True
+        session.context["awaiting_custom"] = False
+        session.state = "clarifying"
+        await self._sessions.save(session, self._settings.timeout_minutes)
+
+    async def _apply_correction(
+        self, message: Message, session: Session, text: str, user_id: int
+    ) -> bool:
+        """Записывает исправление. `False` — текст не похож на код, это обычный запрос.
+
+        Код проверяется по активной версии справочника **до** записи: исправление с
+        несуществующим кодом было бы хуже отсутствия исправления — оно бы подсказывало
+        модели заведомо неверный ответ.
+        """
+        if self._corrections is None or self._nomenclature is None:
+            return False
+
+        digits = "".join(ch for ch in text if ch.isdigit())
+        if not digits or len(digits) != CODE_LENGTH or len(digits) != len(text.replace(" ", "")):
+            # В сообщении есть что-то кроме цифр и пробелов — это не код, а новый запрос.
+            return False
+
+        row = await self._nomenclature.verify_code(digits)
+        if row is None:
+            await message.answer(texts.correction_unknown_code(digits))
+            return True
+
+        await self._corrections.add(
+            user_id=user_id,
+            query=session.description or "",
+            correct_code=row.code,
+            wrong_code=session.answer_code,
+        )
+        await self._audit.record(
+            "correction_saved", user_id=user_id, payload={"chapter": row.code[:2]}
+        )
+        session.context["awaiting_correction"] = False
+        await self._sessions.save(session, self._settings.timeout_minutes)
+        await self._sessions.close(session.id, "done")
+        await message.answer(texts.correction_saved(row.code))
+        return True
 
     # ------------------------------------------------------------------ выполнение
 

@@ -461,7 +461,11 @@ async def test_admin_creates_invite_by_button(harness: tuple[Any, ...]) -> None:
 
     joined = " ".join(session.sent_texts)
     assert "TNVED-" in joined
-    assert "/start TNVED-" in joined, "должен быть готовый текст для пересылки"
+    # Ссылка вместо кода: человек не должен вводить его руками — по ней Telegram
+    # подставит код в /start сам.
+    code = (await runtime.users.list_active_invites())[0].code
+    assert f"https://t.me/test_bot?start={code}" in joined, "должна быть ссылка-приглашение"
+    assert "Открыть бота" in joined, "должно быть готовое сообщение для пересылки"
     assert len(await runtime.users.list_active_invites()) == 1
 
 
@@ -558,3 +562,177 @@ async def test_service_commands_are_free(harness: tuple[Any, ...]) -> None:
 
     row = await db.fetch_one("SELECT COUNT(*) AS n FROM usage_counters")
     assert row is not None and row["n"] == 0
+
+
+# ---------------------------------------------------------------- исправления и рассылка
+
+
+async def _answer_once(harness: tuple[Any, ...], code: str = "8516710000") -> str:
+    """Доводит диалог до ответа с кодом и возвращает id сессии."""
+    runtime, _, db = harness
+    runtime.dispatcher.workflow_data["service"]._classifier._llm = StubLlm(  # noqa: SLF001
+        {"keywords": "кофе приборы", "chapters": ["85"]},
+        {"code": code, "confidence": 0.9},
+    )
+    await feed(harness, message_update("кофеварка капельная бытовая", ADMIN_ID))
+    row = await db.fetch_one("SELECT id FROM sessions ORDER BY rowid DESC LIMIT 1")
+    assert row is not None
+    return str(row["id"])
+
+
+async def test_thumbs_down_asks_for_the_right_code(harness: tuple[Any, ...]) -> None:
+    """«Неверно» без продолжения — потерянная информация: бот знает, что ошибся, но не чем."""
+    _, session, _ = harness
+    session_id = await _answer_once(harness)
+    session.calls.clear()
+
+    await feed(harness, callback_update(f"fb_bad:{session_id}:0", ADMIN_ID))
+
+    assert "верный код" in " ".join(session.sent_texts)
+
+
+async def test_correction_is_saved_and_influences_next_answer(harness: tuple[Any, ...]) -> None:
+    runtime, session, db = harness
+    session_id = await _answer_once(harness)
+    await feed(harness, callback_update(f"fb_bad:{session_id}:0", ADMIN_ID))
+    session.calls.clear()
+
+    await feed(harness, message_update("9105 21 000 0", ADMIN_ID, update_id=61))
+
+    assert "Запомнил" in " ".join(session.sent_texts)
+    row = await db.fetch_one("SELECT correct_code, wrong_code FROM corrections")
+    assert row is not None
+    assert row["correct_code"] == "9105210000"
+    assert row["wrong_code"] == "8516710000", "неверный код тоже сохраняется"
+
+
+async def test_correction_with_unknown_code_is_refused(harness: tuple[Any, ...]) -> None:
+    """Исправление с несуществующим кодом хуже, чем его отсутствие."""
+    _, session, db = harness
+    session_id = await _answer_once(harness)
+    await feed(harness, callback_update(f"fb_bad:{session_id}:0", ADMIN_ID))
+    session.calls.clear()
+
+    await feed(harness, message_update("9999999999", ADMIN_ID, update_id=62))
+
+    assert "нет в активном справочнике" in " ".join(session.sent_texts)
+    row = await db.fetch_one("SELECT COUNT(*) AS n FROM corrections")
+    assert row is not None and row["n"] == 0
+
+
+async def test_new_request_after_thumbs_down_is_classified(harness: tuple[Any, ...]) -> None:
+    """Не знаешь верный код — просто пиши дальше. Режим исправления не должен запирать бота."""
+    runtime, session, _ = harness
+    session_id = await _answer_once(harness)
+    await feed(harness, callback_update(f"fb_bad:{session_id}:0", ADMIN_ID))
+    session.calls.clear()
+    runtime.dispatcher.workflow_data["service"]._classifier._llm = StubLlm(  # noqa: SLF001
+        {"keywords": "часы", "chapters": ["91"]},
+        {"code": "9105210000", "confidence": 0.9},
+    )
+
+    await feed(harness, message_update("часы настенные электрические", ADMIN_ID, update_id=63))
+
+    assert "9105 21 000 0" in " ".join(session.sent_texts)
+
+
+async def test_broadcast_requires_confirmation(harness: tuple[Any, ...]) -> None:
+    runtime, session, _ = harness
+    await runtime.users.add(555, added_by=ADMIN_ID)
+    await feed(harness, message_update("/broadcast", ADMIN_ID))
+    session.calls.clear()
+
+    await feed(harness, message_update("Бот обновился", ADMIN_ID, update_id=70))
+
+    joined = " ".join(session.sent_texts)
+    assert "Предпросмотр" in joined
+    assert "Бот обновился" in joined
+    # До подтверждения никому ничего не ушло.
+    assert not any(data.get("chat_id") == 555 for _, data in session.calls)
+
+
+async def test_broadcast_reaches_every_user(harness: tuple[Any, ...]) -> None:
+    runtime, session, _ = harness
+    await runtime.users.add(555, added_by=ADMIN_ID)
+    await runtime.users.add(556, added_by=ADMIN_ID)
+    await feed(harness, message_update("/broadcast", ADMIN_ID))
+    await feed(harness, message_update("Бот обновился", ADMIN_ID, update_id=71))
+    session.calls.clear()
+
+    await feed(harness, callback_update("adm:bcast_go:-", ADMIN_ID, update_id=72))
+
+    delivered = {
+        data.get("chat_id") for _, data in session.calls if data.get("text") == "Бот обновился"
+    }
+    assert delivered == {555, 556}
+    assert "Доставлено" in " ".join(session.sent_texts)
+
+
+async def test_broadcast_survives_a_blocked_user(harness: tuple[Any, ...]) -> None:
+    """Один заблокировавший бота не должен срывать рассылку остальным."""
+    runtime, session, _ = harness
+    await runtime.users.add(555, added_by=ADMIN_ID)
+    await runtime.users.add(556, added_by=ADMIN_ID)
+    await feed(harness, message_update("/broadcast", ADMIN_ID))
+    await feed(harness, message_update("Текст", ADMIN_ID, update_id=73))
+
+    original = session.make_request
+
+    async def flaky(bot: Any, method: Any, timeout: int | None = None) -> Any:
+        data = method.model_dump(exclude_none=True)
+        if data.get("chat_id") == 555 and data.get("text") == "Текст":
+            msg = "bot was blocked by the user"
+            raise RuntimeError(msg)
+        return await original(bot, method, timeout)
+
+    session.make_request = flaky  # type: ignore[method-assign]
+    await feed(harness, callback_update("adm:bcast_go:-", ADMIN_ID, update_id=74))
+    session.make_request = original  # type: ignore[method-assign]
+
+    joined = " ".join(session.sent_texts)
+    assert "Доставлено" in joined
+    assert "Не доставлено" in joined
+
+
+async def test_broadcast_is_refused_for_regular_user(harness: tuple[Any, ...]) -> None:
+    runtime, session, _ = harness
+    await runtime.users.add(GUEST_ID, added_by=ADMIN_ID)
+    await feed(harness, message_update("/broadcast", GUEST_ID, update_id=75))
+
+    assert "только администратору" in " ".join(session.sent_texts).lower()
+
+
+async def test_regular_text_from_admin_still_classified(harness: tuple[Any, ...]) -> None:
+    """Обработчик черновика рассылки не должен перехватывать обычные запросы админа."""
+    runtime, session, _ = harness
+    runtime.dispatcher.workflow_data["service"]._classifier._llm = StubLlm(  # noqa: SLF001
+        {"keywords": "кофе приборы", "chapters": ["85"]},
+        {"code": "8516710000", "confidence": 0.9},
+    )
+
+    await feed(harness, message_update("кофеварка капельная бытовая", ADMIN_ID, update_id=76))
+
+    assert "8516 71 000 0" in " ".join(session.sent_texts)
+
+
+async def test_admin_text_is_counted_once(harness: tuple[Any, ...]) -> None:
+    """Обработчик черновика рассылки не должен удваивать расход лимита.
+
+    Фильтры отрабатывают до внутренних middleware, а `SkipHandler` из тела обработчика
+    прогнал бы цепочку `auth → ratelimit → logging` второй раз — и каждое сообщение
+    администратора списывалось бы дважды.
+    """
+    runtime, _, db = harness
+    runtime.dispatcher.workflow_data["service"]._classifier._llm = StubLlm(  # noqa: SLF001
+        {"keywords": "кофе приборы", "chapters": ["85"]},
+        {"code": "8516710000", "confidence": 0.9},
+    )
+
+    await feed(harness, message_update("кофеварка капельная бытовая", ADMIN_ID, update_id=77))
+
+    row = await db.fetch_one(
+        "SELECT SUM(count) AS n FROM usage_counters WHERE user_id = ? AND kind = 'hour'",
+        (ADMIN_ID,),
+    )
+    assert row is not None
+    assert row["n"] == 1

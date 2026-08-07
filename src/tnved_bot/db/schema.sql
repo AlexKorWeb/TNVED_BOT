@@ -55,6 +55,32 @@ CREATE VIRTUAL TABLE IF NOT EXISTS nomenclature_fts USING fts5 (
     tokenize = 'unicode61 remove_diacritics 2'
 );
 
+-- Кеш внешней справки по коду (пошлина, НДС, разрешительные документы, примеры
+-- декларирования). Живёт отдельно от `nomenclature`: справка не привязана к версии
+-- справочника и переживает переимпорт, а ходить в сеть за одним и тем же кодом при каждом
+-- запросе — это и задержка ответа, и лишняя нагрузка на чужой сайт.
+CREATE TABLE IF NOT EXISTS code_reference (
+    code         TEXT PRIMARY KEY,          -- 10 цифр без пробелов
+    fetched_at   TEXT    NOT NULL,
+    ok           INTEGER NOT NULL DEFAULT 1 CHECK (ok IN (0, 1)),
+    payload_json TEXT    NOT NULL
+);
+
+-- Исправления кодов пользователями: «бот ответил X, правильно Y».
+-- Хранится текст запроса — он и так лежит в `sessions`; ценность записи именно в паре
+-- «запрос → верный код», без запроса исправление применить не к чему.
+CREATE TABLE IF NOT EXISTS corrections (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      INTEGER NOT NULL,
+    query        TEXT    NOT NULL,
+    query_stems  TEXT    NOT NULL DEFAULT '',
+    wrong_code   TEXT,
+    correct_code TEXT    NOT NULL,          -- прошёл verify_code до записи
+    created_at   TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_corrections_created ON corrections (created_at);
+
 -- ---------------------------------------------------------------- доступ
 
 CREATE TABLE IF NOT EXISTS allowed_users (

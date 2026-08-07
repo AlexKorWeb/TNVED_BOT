@@ -78,6 +78,17 @@ class Settings(BaseSettings):
         30, alias="SESSION_TIMEOUT_MINUTES"
     )
 
+    # --- Внешняя таможенная справка (пошлина, НДС, разрешительные документы) ---
+    # Единственный выход бота в интернет помимо Telegram. Выключается одним флагом:
+    # на машине без сети справка просто не показывается, классификация работает как прежде.
+    reference_enabled: bool = Field(True, alias="REFERENCE_ENABLED")
+    reference_timeout: Annotated[int, Field(gt=0, le=60)] = Field(12, alias="REFERENCE_TIMEOUT")
+    reference_ttl_days: Annotated[int, Field(gt=0, le=365)] = Field(30, alias="REFERENCE_TTL_DAYS")
+    reference_samples: bool = Field(True, alias="REFERENCE_SAMPLES")
+    """Повторный проход с примерами деклараций, когда модель не уверена в коде."""
+
+    max_savings: Annotated[int, Field(ge=0, le=5)] = Field(2, alias="MAX_SAVINGS")
+
     # --- Хранение данных ---
     photo_ttl_hours: Annotated[int, Field(gt=0)] = Field(48, alias="PHOTO_TTL_HOURS")
     photo_meta_retention_days: Annotated[int, Field(gt=0)] = Field(

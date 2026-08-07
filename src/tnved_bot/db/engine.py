@@ -23,7 +23,9 @@ from tnved_bot.logging_setup import get_logger
 
 log = get_logger(__name__)
 
-SCHEMA_VERSION = 2
+# v3 добавляет `code_reference` и `corrections`. Обе таблицы новые, поэтому миграции нет:
+# `CREATE TABLE IF NOT EXISTS` из schema.sql создаёт их и на существующей БД.
+SCHEMA_VERSION = 3
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
 # Миграции: версия схемы → SQL, приводящий БД к этой версии.

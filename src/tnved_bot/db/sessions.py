@@ -42,6 +42,20 @@ class Session:
     def awaiting_custom(self) -> bool:
         return bool(self.context.get("awaiting_custom"))
 
+    @property
+    def awaiting_correction(self) -> bool:
+        """Пользователь нажал 👎 и может прислать верный код.
+
+        Ради этого закрытая сессия возвращается в `clarifying`: состояние диалога и так
+        живёт в сессии, а заводить вторую таблицу ради одного флага незачем.
+        """
+        return bool(self.context.get("awaiting_correction"))
+
+    @property
+    def answer_code(self) -> str | None:
+        code = self.context.get("answer_code")
+        return str(code) if code else None
+
 
 def _to_session(row: Any) -> Session:
     return Session(
