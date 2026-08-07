@@ -31,6 +31,12 @@ CREATE TABLE IF NOT EXISTS nomenclature (
     unit        TEXT,                      -- доп. единица измерения (может отсутствовать)
     notes       TEXT,                      -- примечания к группе/позиции
     tariff      TEXT,                      -- ставка пошлины; в v1 не используется
+    -- Основы слов, по которым идёт поиск. Хранятся отдельно, потому что индексировать
+    -- надо именно их: префиксный поиск по обрубку давал ложные совпадения
+    -- («горный» → «горн»* → «горностая»), а поиск по исходным словам не связывал
+    -- словоформы («часы» и «часов»).
+    stems_name  TEXT NOT NULL DEFAULT '',
+    stems_full  TEXT NOT NULL DEFAULT '',
     version_id  INTEGER NOT NULL REFERENCES nomenclature_version (id) ON DELETE CASCADE,
     PRIMARY KEY (code, version_id)
 );
@@ -41,11 +47,11 @@ CREATE INDEX IF NOT EXISTS idx_nomenclature_parent ON nomenclature (parent_code,
 -- Полнотекстовый индекс. Наполняется импортёром (T-003), используется поиском (T-004).
 -- Хранит только активную версию: держать все версии в индексе незачем, а поиск по чужой
 -- версии выдал бы неактуальные коды.
+-- Индексируются основы слов, а не исходный текст: см. комментарий к stems_name выше.
 CREATE VIRTUAL TABLE IF NOT EXISTS nomenclature_fts USING fts5 (
     code UNINDEXED,
-    name,
-    name_full,
-    notes,
+    stems_name,
+    stems_full,
     tokenize = 'unicode61 remove_diacritics 2'
 );
 

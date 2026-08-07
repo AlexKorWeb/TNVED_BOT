@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 from tnved_bot.clock import now_iso
 from tnved_bot.db.engine import Database
+from tnved_bot.db.search import stems_of
 from tnved_bot.logging_setup import get_logger
 
 log = get_logger(__name__)
@@ -44,6 +45,14 @@ class NomenclatureRow:
     unit: str | None = None
     notes: str | None = None
     tariff: str | None = None
+
+    @property
+    def stems_name(self) -> str:
+        return stems_of(self.name)
+
+    @property
+    def stems_full(self) -> str:
+        return stems_of(self.name_full)
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,8 +121,9 @@ class NomenclatureRepository:
 
             await conn.executemany(
                 "INSERT INTO nomenclature"
-                " (code, parent_code, level, name, name_full, unit, notes, tariff, version_id)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " (code, parent_code, level, name, name_full, unit, notes, tariff,"
+                "  stems_name, stems_full, version_id)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 [
                     (
                         r.code,
@@ -124,6 +134,8 @@ class NomenclatureRepository:
                         r.unit,
                         r.notes,
                         r.tariff,
+                        r.stems_name,
+                        r.stems_full,
                         version_id,
                     )
                     for r in rows
@@ -162,8 +174,8 @@ class NomenclatureRepository:
         await execute("UPDATE nomenclature_version SET is_active = 1 WHERE id = ?", (version_id,))
         await execute("DELETE FROM nomenclature_fts")
         await execute(
-            "INSERT INTO nomenclature_fts (code, name, name_full, notes)"
-            " SELECT code, name, name_full, notes FROM nomenclature WHERE version_id = ?",
+            "INSERT INTO nomenclature_fts (code, stems_name, stems_full)"
+            " SELECT code, stems_name, stems_full FROM nomenclature WHERE version_id = ?",
             (version_id,),
         )
 

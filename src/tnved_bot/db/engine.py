@@ -23,8 +23,19 @@ from tnved_bot.logging_setup import get_logger
 
 log = get_logger(__name__)
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
+
+# Миграции: версия схемы → SQL, приводящий БД к этой версии.
+# Пользовательских данных они не трогают. Справочник переимпортируется за секунду,
+# поэтому его проще пересобрать, чем вычислять основы слов внутри SQL.
+MIGRATIONS: dict[int, tuple[str, ...]] = {
+    2: (
+        "DROP TABLE IF EXISTS nomenclature_fts",
+        "DROP TABLE IF EXISTS nomenclature",
+        "DELETE FROM nomenclature_version",
+    ),
+}
 
 # Паузы между повторами при «database is locked». Суммарно ~1.3 с — этого хватает,
 # чтобы переждать чужую запись, и мало, чтобы пользователь заметил задержку.
@@ -144,6 +155,19 @@ class Database:
     async def _apply_schema(self) -> None:
         conn = self.connection
         current = await self.user_version()
+
+        # Миграции идут до создания таблиц: они удаляют устаревшие структуры, которые
+        # `CREATE TABLE IF NOT EXISTS` иначе оставил бы в старом виде.
+        # На новой БД (user_version = 0) мигрировать нечего — таблиц ещё нет.
+        if current > 0:
+            for version in sorted(MIGRATIONS):
+                if current < version:
+                    for statement in MIGRATIONS[version]:
+                        await conn.execute(statement)
+                    log.warning(
+                        "schema_migrated", to=version, note="справочник нужно переимпортировать"
+                    )
+
         await conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
         # executescript коммитит и сбрасывает PRAGMA foreign_keys — возвращаем.
         await conn.execute("PRAGMA foreign_keys = ON")
