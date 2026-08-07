@@ -1,0 +1,49 @@
+# --- Секреты ---
+.env
+.env.local
+*.token
+
+# --- Данные (фото пользователей, БД, бэкапы) ---
+# Шаблон `data/*`, а не `data/` — иначе git игнорирует каталог целиком
+# и перекрывающее правило `!data/.gitkeep` не срабатывает.
+data/*
+!data/.gitkeep
+logs/*
+!logs/.gitkeep
+reports/qa/*.md
+!reports/qa/.gitkeep
+
+# --- Python ---
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# --- Инструменты ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+
+# --- Служебное ---
+docs/.active_ticket
+*.lock
+!requirements.lock
+
+# --- ОС и редакторы ---
+Thumbs.db
+desktop.ini
+.DS_Store
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,19 @@
+# Прямые зависимости TNVED_BOT.
+# Версии закрепляются на T-001 после проверки совместимости с установленным Python.
+# Новая зависимость добавляется только после Decision Ladder (.claude/rules/ponytail.md).
+
+# --- Runtime ---
+aiogram~=3.15
+aiosqlite~=0.20
+pydantic~=2.10
+pydantic-settings~=2.7
+Pillow~=11.0
+APScheduler~=3.11
+structlog~=24.4
+
+# --- Dev ---
+pytest~=8.3
+pytest-asyncio~=0.25
+pytest-cov~=6.0
+ruff~=0.8
+mypy~=1.14
