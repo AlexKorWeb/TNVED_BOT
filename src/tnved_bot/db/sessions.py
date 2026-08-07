@@ -25,10 +25,22 @@ class Session:
     state: SessionState
     description: str | None = None
     photo_id: str | None = None
-    answers: list[dict[str, str]] = field(default_factory=list)
-    candidates: list[dict[str, Any]] | None = None
+    answers: list[str] = field(default_factory=list)
+    context: dict[str, Any] = field(default_factory=dict)
+    """Рабочее состояние диалога: заданный вопрос, предложенные варианты, ожидание
+    свободного ответа, последний ответ для фидбека. Хранится в БД, чтобы перезапуск
+    бота не терял начатый диалог."""
     round: int = 0
     expires_at: str = ""
+
+    @property
+    def pending_options(self) -> list[str]:
+        options = self.context.get("options")
+        return options if isinstance(options, list) else []
+
+    @property
+    def awaiting_custom(self) -> bool:
+        return bool(self.context.get("awaiting_custom"))
 
 
 def _to_session(row: Any) -> Session:
@@ -40,7 +52,7 @@ def _to_session(row: Any) -> Session:
         description=row["description"],
         photo_id=row["photo_id"],
         answers=json.loads(row["answers_json"]),
-        candidates=json.loads(row["candidates_json"]) if row["candidates_json"] else None,
+        context=json.loads(row["candidates_json"]) if row["candidates_json"] else {},
         round=row["round"],
         expires_at=row["expires_at"],
     )
@@ -93,7 +105,7 @@ class SessionRepository:
                 session.description,
                 session.photo_id,
                 json.dumps(session.answers, ensure_ascii=False),
-                json.dumps(session.candidates, ensure_ascii=False) if session.candidates else None,
+                json.dumps(session.context, ensure_ascii=False) if session.context else None,
                 session.round,
                 now_iso(),
                 iso_in(minutes=timeout_minutes),

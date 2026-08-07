@@ -181,17 +181,18 @@ async def test_session_roundtrip(db: Database) -> None:
     )
 
     created.state = "clarifying"
-    created.answers = [{"q": "материал", "a": "пластик"}]
-    created.candidates = [{"code": "3917231009"}]
+    created.answers = ["пластик"]
+    created.context = {"options": ["Сталь", "Пластик"], "question": "Материал?"}
     created.round = 1
     await repo.save(created, timeout_minutes=30)
 
     loaded = await repo.get("s1")
     assert loaded is not None
     assert loaded.state == "clarifying"
-    assert loaded.answers == [{"q": "материал", "a": "пластик"}]
-    assert loaded.candidates == [{"code": "3917231009"}]
+    assert loaded.answers == ["пластик"]
+    assert loaded.pending_options == ["Сталь", "Пластик"]
     assert loaded.round == 1
+    assert loaded.awaiting_custom is False
 
 
 async def test_get_missing_session_returns_none(db: Database) -> None:

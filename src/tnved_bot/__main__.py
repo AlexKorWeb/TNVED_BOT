@@ -16,9 +16,11 @@ from types import FrameType
 from pydantic import ValidationError
 
 from tnved_bot import __version__
+from tnved_bot.bot.setup import build, run_polling
 from tnved_bot.config import Settings, format_config_error, load_settings
 from tnved_bot.core.errors import AlreadyRunningError
 from tnved_bot.db.engine import Database
+from tnved_bot.jobs.janitor import Janitor
 from tnved_bot.lockfile import SingleInstanceLock
 from tnved_bot.logging_setup import get_logger, setup_logging
 
@@ -65,21 +67,35 @@ async def run(settings: Settings) -> None:
     )
     await db.connect()
 
+    runtime = build(settings, db)
+    nomenclature = await runtime.nomenclature.active_version()
+    claude_path = runtime.llm.check_binary()
+
     log.info(
         "bot_started",
         version=__version__,
         python=sys.version.split()[0],
         admins=len(settings.admin_user_ids),
-        db=str(db.path),
         schema=await db.user_version(),
+        nomenclature=nomenclature.rows if nomenclature else 0,
+        claude=bool(claude_path),
     )
+    # Предупреждения при старте, а не при первом запросе: администратор должен узнать
+    # о проблеме сразу, а не от пользователя.
+    if nomenclature is None:
+        log.error("nomenclature_not_loaded", hint="scripts/import_nomenclature.py")
+    if claude_path is None:
+        log.error("claude_not_found", binary=settings.claude_bin)
 
-    # T-003…T-009 подключат сюда справочник, планировщик и polling. Пока бот держится
-    # запущенным, чтобы проверялись старт, БД, лок и graceful shutdown.
+    janitor = Janitor(db, settings)
+    await janitor.start(runtime.bot)
+
     try:
-        await shutdown.wait()
+        await run_polling(runtime, shutdown)
     finally:
         log.info("bot_stopping")
+        await janitor.stop()
+        await runtime.bot.session.close()
         await db.close()
 
 
