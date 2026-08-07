@@ -5,6 +5,37 @@
 
 ## [Unreleased]
 
+### Added — T-001 Каркас проекта, конфигурация, логирование
+
+- `config.py` — конфигурация на `pydantic-settings`, 34 переменные, валидация при старте.
+  `ADMIN_USER_IDS` разбирается из CSV собственным валидатором: составные типы
+  `pydantic-settings` читает из окружения как JSON, и `ADMIN_USER_IDS=123,456` упал бы.
+  Ошибки конфигурации выводятся человекочитаемым текстом на русском, без traceback.
+- `logging_setup.py` — `structlog` + JSON + ротация 10 МБ × 5, маскирование секретов
+  на двух уровнях (процессор structlog и `MaskingFormatter` на handler'ах).
+- `core/errors.py` — иерархия `TnvedError` с полем `user_message`.
+- `lockfile.py` — защита от второй копии через блокировку ОС (`msvcrt` / `fcntl`).
+  Лок и PID разнесены по разным файлам: `bot.lock` и `bot.pid`.
+- `__main__.py` — старт, graceful shutdown по SIGINT/SIGTERM/SIGBREAK, коды выхода
+  0/1/2/3.
+- `scripts/smoke_check.py` — проверка запущенного бота (процесс, `claude`, лог, диск,
+  справочник).
+- `pyproject.toml` — ruff (14 наборов правил), mypy (strict для `core/` и `llm/`), pytest.
+- 44 теста, покрытие 93 %. Отчёт: [reports/qa/T-001.md](reports/qa/T-001.md).
+
+### Fixed — T-001 (найдено тестами и локальной проверкой)
+
+- **Утечка токена в лог из URL:** `\b` в шаблоне маскирования не срабатывал на
+  `.../bot<token>/getMe` — именно в таком виде aiogram логирует запросы к Telegram API.
+- **Утечка токена в лог из traceback:** `logger.exception()` дописывал traceback мимо
+  процессоров structlog. Добавлен `MaskingFormatter` на уровне handler'ов.
+- **PID был нечитаем при живом боте:** обязательная блокировка Windows не давала
+  прочитать `bot.lock`, где лежал PID. Файлы разделены.
+- **Устаревший PID мог привести к убийству чужого процесса:** `bot.pid` удаляется при
+  штатной остановке, перед `Stop-Process` требуется проверка `CommandLine`.
+- **`already_running` логировался как ERROR** — понижено до WARNING: это штатный исход
+  при автоперезапуске планировщиком.
+
 ### Added
 
 - Техническое задание: [docs/TZ.md](docs/TZ.md) — архитектура, пайплайн классификации,

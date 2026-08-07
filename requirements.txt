@@ -1,19 +1,23 @@
-# Прямые зависимости TNVED_BOT.
-# Версии закрепляются на T-001 после проверки совместимости с установленным Python.
+# Прямые зависимости TNVED_BOT — точные версии, проверенные на Python 3.12.10.
+# Полное дерево с транзитивными зависимостями — в requirements.lock.
 # Новая зависимость добавляется только после Decision Ladder (.claude/rules/ponytail.md).
+#
+# Почему 3.12, а не 3.14 (на машине есть оба): 3.12 — проверенная связка, все колёса
+# бинарные и ставятся без сборки. Переход на 3.14 возможен, но не даёт ничего для этого
+# проекта и потребовал бы перепроверки Pillow/pydantic-core.
 
 # --- Runtime ---
-aiogram~=3.15
-aiosqlite~=0.20
-pydantic~=2.10
-pydantic-settings~=2.7
-Pillow~=11.0
-APScheduler~=3.11
-structlog~=24.4
+aiogram==3.30.0
+aiosqlite==0.22.1
+pydantic==2.13.4
+pydantic-settings==2.15.0
+pillow==11.3.0
+APScheduler==3.11.3
+structlog==24.4.0
 
 # --- Dev ---
-pytest~=8.3
-pytest-asyncio~=0.25
-pytest-cov~=6.0
-ruff~=0.8
-mypy~=1.14
+pytest==8.4.2
+pytest-asyncio==0.26.0
+pytest-cov==6.3.0
+ruff==0.16.1
+mypy==1.20.2

@@ -1,0 +1,73 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tnved-bot"
+version = "0.1.0"
+description = "Telegram bot for finding EAEU TN VED codes by description or photo"
+requires-python = ">=3.12"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tnved_bot"]
+
+# ---------------------------------------------------------------- ruff
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",      # pycodestyle + pyflakes
+    "I",                # isort
+    "N",                # pep8-naming
+    "UP",               # pyupgrade
+    "B",                # bugbear
+    "ASYNC",            # async-специфичные ошибки
+    "S",                # bandit — обязательно, проект с trust boundary
+    "A",                # затенение builtins
+    "C4",               # comprehensions
+    "DTZ",              # naive datetime запрещены
+    "T20",              # никаких print() в src
+    "RET", "SIM",       # упрощения
+    "PTH",              # только pathlib
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "S101",   # assert — основной инструмент тестов
+    "S105",   # «хардкод пароля» — в тестах это фикстуры-пустышки
+    "S106",
+]
+"scripts/**" = ["T20"]  # скриптам печатать в stdout можно
+
+# ---------------------------------------------------------------- mypy
+
+[tool.mypy]
+python_version = "3.12"
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+no_implicit_optional = true
+warn_return_any = true
+
+[[tool.mypy.overrides]]
+# core/ и llm/ — сердце логики классификации, здесь строгий режим
+module = ["tnved_bot.core.*", "tnved_bot.llm.*"]
+strict = true
+
+# ---------------------------------------------------------------- pytest
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["error::DeprecationWarning:tnved_bot.*"]
+
+[tool.coverage.run]
+source = ["src/tnved_bot"]
+branch = true

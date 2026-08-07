@@ -10,8 +10,11 @@ data/*
 !data/.gitkeep
 logs/*
 !logs/.gitkeep
-reports/qa/*.md
-!reports/qa/.gitkeep
+
+# Отчёты QA версионируются: это доказательства проверок, на них ссылаются тикеты
+# и CHANGELOG. Игнорируем только временные артефакты локальных прогонов.
+reports/qa/*.png
+reports/qa/*.tmp
 
 # --- Python ---
 .venv/

@@ -61,8 +61,29 @@ claude --version
 
 ### 6. Остановить
 
-Останови процесс через `stop_cmd` (`Stop-Process -Id <PID>` по `data/bot.lock`).
-Убедись, что `data/bot.lock` освобождён.
+PID берётся **из `data/bot.pid`** — не из `data/bot.lock` и не из `Start-Process -PassThru`:
+
+- `data/bot.lock` пока бот жив прочитать нельзя: байт-лок на Windows обязательный,
+  `Get-Content` падает с «another process has locked a portion of the file»;
+- `Start-Process -PassThru` при перенаправлении вывода возвращает PID промежуточного процесса,
+  а не запущенного (проверено — расходится).
+
+**Перед `Stop-Process` обязательно убедись, что PID принадлежит боту.** После аварийного
+завершения `bot.pid` остаётся устаревшим, а ОС могла выдать этот номер другой программе:
+
+```powershell
+$botPid = (Get-Content data\bot.pid -Raw -ErrorAction SilentlyContinue).Trim()
+if ($botPid) {
+  $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$botPid" -ErrorAction SilentlyContinue
+  if ($proc -and $proc.CommandLine -like "*tnved_bot*") { Stop-Process -Id $botPid }
+  else { "PID $botPid не принадлежит боту — не трогаем" }
+}
+```
+
+Не используй переменную с именем `$pid` — это встроенная переменная PowerShell (PID самой сессии),
+присваивание в неё либо игнорируется, либо ломает логику.
+
+После остановки `data/bot.pid` должен исчезнуть — он удаляется при штатном завершении.
 
 ### 7. Записать результат
 
