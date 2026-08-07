@@ -108,6 +108,28 @@ def check_nomenclature(db_path: Path) -> tuple[bool | None, str]:
     return True, f"справочник: {row[0]} кодов, импорт {row[1]}"
 
 
+def check_autostart() -> tuple[bool | None, str]:
+    """Зарегистрирована ли задача планировщика. Не критично: бота можно запускать вручную."""
+    if sys.platform != "win32":
+        return None, "не применимо на этой ОС"
+    schtasks = shutil.which("schtasks")
+    if schtasks is None:
+        return None, "schtasks не найден"
+    try:
+        result = subprocess.run(  # noqa: S603 — путь из which, аргументы фиксированы
+            [schtasks, "/query", "/tn", "TNVED_BOT"],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, f"не удалось проверить: {exc}"
+    if result.returncode != 0:
+        return None, "задача не зарегистрирована (scripts\\install_autostart.ps1)"
+    return True, "задача TNVED_BOT зарегистрирована"
+
+
 def check_disk(path: Path) -> tuple[bool, str]:
     free_mb = shutil.disk_usage(path).free // (1024 * 1024)
     if free_mb < MIN_FREE_MB:
@@ -131,6 +153,7 @@ def main() -> int:
         ("Лог", check_log(log_dir / "bot.log")),
         ("Справочник", check_nomenclature(db_path)),
         ("Диск", check_disk(db_path.parent)),
+        ("Автозапуск", check_autostart()),
     ]
 
     print("Smoke-проверка TNVED_BOT")

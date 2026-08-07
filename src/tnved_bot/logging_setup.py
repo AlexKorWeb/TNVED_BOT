@@ -85,8 +85,9 @@ def setup_logging(log_dir: Path, level: str = "INFO", *, console: bool = True) -
         force=True,
     )
 
-    # aiohttp и aiogram шумят на DEBUG и могут вывалить заголовки запросов вместе с токеном.
-    for noisy in ("aiogram.event", "aiohttp.access", "apscheduler.executors.default"):
+    # Чужие библиотеки пишут в тот же лог. aiohttp и aiogram на DEBUG вываливают заголовки
+    # запросов вместе с токеном, apscheduler — по три строки на каждое задание.
+    for noisy in ("aiogram.event", "aiohttp.access", "apscheduler"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
     structlog.configure(
