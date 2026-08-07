@@ -48,6 +48,13 @@ class NomenclatureError(TnvedError):
     user_message = "Справочник ТН ВЭД недоступен. Обратитесь к администратору."
 
 
+class NomenclatureImportError(NomenclatureError):
+    """Файл справочника не читается или в нём нет нужных колонок.
+
+    Возникает только в скрипте импорта — до пользователей не доходит.
+    """
+
+
 class StorageError(TnvedError):
     """Проблема с хранением данных: файловая система, место на диске, БД."""
 
