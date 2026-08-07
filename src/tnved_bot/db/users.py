@@ -37,6 +37,15 @@ class AllowedUser:
 
 
 @dataclass(frozen=True, slots=True)
+class Invite:
+    code: str
+    note: str | None
+    created_by: int
+    created_at: str
+    expires_at: str
+
+
+@dataclass(frozen=True, slots=True)
 class InviteResult:
     ok: bool
     reason: str = ""
@@ -144,6 +153,42 @@ class UserRepository:
         )
         log.info("invite_created", created_by=created_by)
         return code
+
+    async def list_active_invites(self) -> list[Invite]:
+        """Невостребованные и непросроченные коды.
+
+        Нужны в панели: выданный и забытый код — это открытая дверь на сутки, и админ
+        должен видеть, сколько их и кому они предназначались.
+        """
+        rows = await self._db.fetch_all(
+            "SELECT code, note, created_by, created_at, expires_at FROM invite_codes"
+            " WHERE used_by IS NULL AND expires_at > ? ORDER BY created_at DESC",
+            (now_iso(),),
+        )
+        return [
+            Invite(
+                code=row["code"],
+                note=row["note"],
+                created_by=row["created_by"],
+                created_at=row["created_at"],
+                expires_at=row["expires_at"],
+            )
+            for row in rows
+        ]
+
+    async def revoke_invite(self, code: str) -> bool:
+        """Отзывает невостребованный код.
+
+        Код удаляется, а не помечается: использованные коды хранят историю активаций,
+        а неиспользованный отозванный не несёт никакой информации.
+        """
+        removed = await self._db.execute(
+            "DELETE FROM invite_codes WHERE code = ? AND used_by IS NULL",
+            (normalize_code(code),),
+        )
+        if removed:
+            log.info("invite_revoked")
+        return bool(removed)
 
     async def redeem(self, raw_code: str, user_id: int, username: str | None) -> InviteResult:
         """Активирует код приглашения.

@@ -13,8 +13,9 @@ from dataclasses import dataclass
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.types import BotCommand, BotCommandScopeChat, BotCommandScopeDefault
 
-from tnved_bot.bot.handlers import callbacks, commands, errors, photo, text
+from tnved_bot.bot.handlers import admin, callbacks, commands, errors, photo, text
 from tnved_bot.bot.middlewares.auth import AuthMiddleware
 from tnved_bot.bot.middlewares.logging import LoggingMiddleware
 from tnved_bot.bot.middlewares.ratelimit import RateLimitMiddleware
@@ -141,12 +142,58 @@ def build(settings: Settings, db: Database) -> BotRuntime:
     # сбои в командах и в тексте прошли бы мимо него.
     dispatcher.errors.register(errors.handle_error)
 
+    # Админский роутер — до общего обработчика кнопок: он забирает `adm:` себе.
+    dispatcher.include_router(admin.build_router())
     dispatcher.include_router(commands.build_router())
     dispatcher.include_router(callbacks.build_router())
     dispatcher.include_router(photo.build_router())
     dispatcher.include_router(text.build_router())
 
     return BotRuntime(bot, dispatcher, llm, sessions, nomenclature, audit, users, service)
+
+
+USER_COMMANDS = [
+    ("start", "Начать работу"),
+    ("help", "Как описывать товар"),
+    ("code", "Наименование по коду"),
+    ("cancel", "Прервать уточнения"),
+    ("forget", "Удалить мои данные"),
+    ("version", "Версия бота и справочника"),
+]
+
+ADMIN_COMMANDS = [
+    ("admin", "Панель администратора"),
+    ("users", "Список пользователей"),
+    ("invite", "Код приглашения"),
+    ("adduser", "Выдать доступ по ID"),
+    ("deluser", "Отозвать доступ"),
+    ("health", "Состояние системы"),
+    ("stats", "Статистика за сутки"),
+]
+
+
+async def publish_commands(runtime: BotRuntime, admins: frozenset[int]) -> None:
+    """Заполняет меню команд в интерфейсе Telegram.
+
+    Без этого кнопка «Меню» в чате пуста, и о командах можно узнать только из /help.
+    Админские команды публикуются точечно, для чатов администраторов: обычному
+    пользователю незачем видеть в меню то, чем он не может воспользоваться.
+
+    Сбой не критичен — это оформление, а не работа бота.
+    """
+    user_menu = [BotCommand(command=name, description=title) for name, title in USER_COMMANDS]
+    admin_menu = user_menu + [
+        BotCommand(command=name, description=title) for name, title in ADMIN_COMMANDS
+    ]
+    try:
+        await runtime.bot.set_my_commands(user_menu, scope=BotCommandScopeDefault())
+        for admin_id in admins:
+            await runtime.bot.set_my_commands(
+                admin_menu, scope=BotCommandScopeChat(chat_id=admin_id)
+            )
+        log.info("commands_published", admins=len(admins))
+    except Exception as exc:  # noqa: BLE001 — меню не главное, бот работает и без него
+        log.warning("commands_publish_failed", error=str(exc)[:200])
 
 
 async def run_polling(runtime: BotRuntime, shutdown: asyncio.Event) -> None:

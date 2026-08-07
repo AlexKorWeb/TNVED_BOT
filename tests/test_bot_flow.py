@@ -66,6 +66,8 @@ class RecordingSession(BaseSession):
                 chat=Chat(id=int(data.get("chat_id", 1)), type="private"),
                 text=data.get("text", ""),
             ).as_(bot)
+        if name == "GetMe":
+            return User(id=1, is_bot=True, first_name="Тест", username="test_bot")
         return True
 
     async def stream_content(self, *args: Any, **kwargs: Any) -> AsyncIterator[bytes]:  # type: ignore[override]
@@ -413,6 +415,115 @@ async def test_cancel_button_closes_session(harness: tuple[Any, ...]) -> None:
 
 async def test_garbage_callback_data_does_not_crash(harness: tuple[Any, ...]) -> None:
     for payload in ("мусор", "opt:", "opt:abc:xyz", ":::", "opt:x:1:2:3"):
+        await feed(harness, callback_update(payload, ADMIN_ID))
+    _, session, _ = harness
+    assert any(name == "AnswerCallbackQuery" for name, _ in session.calls)
+
+
+# ---------------------------------------------------------------- панель администратора
+
+
+async def test_admin_panel_opens(harness: tuple[Any, ...]) -> None:
+    session = await feed(harness, message_update("/admin", ADMIN_ID))
+    joined = " ".join(session.sent_texts)
+    assert "Панель администратора" in joined
+    labels = [b["text"] for row in session.last_markup["inline_keyboard"] for b in row]
+    assert any("Пользователи" in label for label in labels)
+    assert any("приглашение" in label.lower() for label in labels)
+
+
+async def test_admin_panel_refused_for_regular_user(harness: tuple[Any, ...]) -> None:
+    runtime, session, _ = harness
+    await runtime.users.add(GUEST_ID, added_by=ADMIN_ID)
+    await feed(harness, message_update("/admin", GUEST_ID))
+    assert "только администратору" in " ".join(session.sent_texts)
+
+
+async def test_admin_callback_refused_for_regular_user(harness: tuple[Any, ...]) -> None:
+    """Кнопку можно переслать: право проверяется в каждом обработчике, а не один раз."""
+    runtime, session, _ = harness
+    await runtime.users.add(GUEST_ID, added_by=ADMIN_ID)
+    session.calls.clear()
+
+    await feed(harness, callback_update("adm:users:-", GUEST_ID))
+
+    assert not any("Пользователи" in text for text in session.sent_texts)
+    answers = [d for name, d in session.calls if name == "AnswerCallbackQuery"]
+    assert answers and "администратору" in answers[0].get("text", "")
+
+
+async def test_admin_creates_invite_by_button(harness: tuple[Any, ...]) -> None:
+    runtime, session, _ = harness
+    await feed(harness, message_update("/admin", ADMIN_ID))
+    session.calls.clear()
+
+    await feed(harness, callback_update("adm:new_invite:-", ADMIN_ID))
+
+    joined = " ".join(session.sent_texts)
+    assert "TNVED-" in joined
+    assert "/start TNVED-" in joined, "должен быть готовый текст для пересылки"
+    assert len(await runtime.users.list_active_invites()) == 1
+
+
+async def test_admin_revokes_invite_by_button(harness: tuple[Any, ...]) -> None:
+    runtime, session, _ = harness
+    code = await runtime.users.create_invite(ADMIN_ID, "Петров", ttl_hours=24)
+    await feed(harness, message_update("/admin", ADMIN_ID))
+    session.calls.clear()
+
+    await feed(harness, callback_update(f"adm:rm_invite:{code}", ADMIN_ID))
+
+    assert "отозван" in " ".join(session.sent_texts).lower()
+    assert await runtime.users.list_active_invites() == []
+    # Отозванный код больше не работает.
+    assert not (await runtime.users.redeem(code, GUEST_ID, None)).ok
+
+
+async def test_admin_revokes_user_with_confirmation(harness: tuple[Any, ...]) -> None:
+    runtime, session, _ = harness
+    await runtime.users.add(GUEST_ID, added_by=ADMIN_ID, note="Петров")
+    await feed(harness, message_update("/admin", ADMIN_ID))
+
+    session.calls.clear()
+    await feed(harness, callback_update(f"adm:ask_user:{GUEST_ID}", ADMIN_ID))
+    assert "Отозвать доступ?" in " ".join(session.sent_texts)
+    assert await runtime.users.is_allowed(GUEST_ID), "до подтверждения доступ сохраняется"
+
+    session.calls.clear()
+    await feed(harness, callback_update(f"adm:rm_user:{GUEST_ID}", ADMIN_ID))
+    assert not await runtime.users.is_allowed(GUEST_ID)
+    assert "отозван" in " ".join(session.sent_texts).lower()
+
+
+async def test_admin_cannot_revoke_env_admin_via_panel(harness: tuple[Any, ...]) -> None:
+    """Отзыв админа из .env через панель оставил бы бота без управления."""
+    runtime, session, _ = harness
+    await feed(harness, message_update("/admin", ADMIN_ID))
+    session.calls.clear()
+
+    await feed(harness, callback_update(f"adm:rm_user:{ADMIN_ID}", ADMIN_ID))
+
+    assert "аварийный вход" in " ".join(session.sent_texts)
+    assert ADMIN_ID in runtime.dispatcher.workflow_data["admins"]
+
+
+async def test_admin_screens_navigate(harness: tuple[Any, ...]) -> None:
+    _, session, _ = harness
+    await feed(harness, message_update("/admin", ADMIN_ID))
+    for action, marker in (
+        ("adm:users:-", "Пользователи"),
+        ("adm:invites:-", "приглашения"),
+        ("adm:stats:-", "За последние сутки"),
+        ("adm:health:-", "Состояние"),
+        ("adm:menu:-", "Панель администратора"),
+    ):
+        session.calls.clear()
+        await feed(harness, callback_update(action, ADMIN_ID))
+        assert marker in " ".join(session.sent_texts), f"экран {action} не открылся"
+
+
+async def test_garbage_admin_callback_does_not_crash(harness: tuple[Any, ...]) -> None:
+    for payload in ("adm:", "adm:нет-такого:-", "adm:rm_user:абв", "adm:ask_user:"):
         await feed(harness, callback_update(payload, ADMIN_ID))
     _, session, _ = harness
     assert any(name == "AnswerCallbackQuery" for name, _ in session.calls)

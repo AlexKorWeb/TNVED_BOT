@@ -63,6 +63,108 @@ def restart() -> InlineKeyboardMarkup:
     )
 
 
+# ---------------------------------------------------------------- админ-панель
+#
+# Отдельный префикс `adm:` и отдельный роутер: админские кнопки не должны разбираться
+# тем же кодом, что и пользовательские, — иначе легко перепутать проверки прав.
+
+ADMIN_PREFIX = "adm"
+ADM_MENU = "menu"
+ADM_USERS = "users"
+ADM_INVITES = "invites"
+ADM_NEW_INVITE = "new_invite"
+ADM_REVOKE_INVITE = "rm_invite"
+ADM_CONFIRM_USER = "ask_user"
+ADM_REMOVE_USER = "rm_user"
+ADM_STATS = "stats"
+ADM_HEALTH = "health"
+
+MAX_LABEL = 28
+
+
+def _cut(text: str) -> str:
+    """Подпись кнопки Telegram обрезает сам; лучше сделать это осмысленно."""
+    return text if len(text) <= MAX_LABEL else text[: MAX_LABEL - 1] + "…"
+
+
+def admin_menu() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="👥 Пользователи", callback_data=f"{ADMIN_PREFIX}:{ADM_USERS}:-")
+    builder.button(text="🎟 Приглашения", callback_data=f"{ADMIN_PREFIX}:{ADM_INVITES}:-")
+    builder.button(text="➕ Новое приглашение", callback_data=f"{ADMIN_PREFIX}:{ADM_NEW_INVITE}:-")
+    builder.button(text="📊 Статистика", callback_data=f"{ADMIN_PREFIX}:{ADM_STATS}:-")
+    builder.button(text="🩺 Состояние", callback_data=f"{ADMIN_PREFIX}:{ADM_HEALTH}:-")
+    builder.adjust(2, 1, 2)
+    return builder.as_markup()
+
+
+def admin_users(people: list[tuple[int, str]]) -> InlineKeyboardMarkup:
+    """`people` — пары (id, подпись). Кнопка на каждого: отзыв в один шаг с подтверждением."""
+    builder = InlineKeyboardBuilder()
+    for user_id, label in people:
+        builder.button(
+            text=f"❌ {_cut(label)}",
+            callback_data=f"{ADMIN_PREFIX}:{ADM_CONFIRM_USER}:{user_id}",
+        )
+    builder.button(text="⬅️ Назад", callback_data=f"{ADMIN_PREFIX}:{ADM_MENU}:-")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def admin_confirm_user(user_id: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(
+        text="✅ Да, отозвать", callback_data=f"{ADMIN_PREFIX}:{ADM_REMOVE_USER}:{user_id}"
+    )
+    builder.button(text="⬅️ Отмена", callback_data=f"{ADMIN_PREFIX}:{ADM_USERS}:-")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def admin_invites(codes: list[tuple[str, str]]) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for code, label in codes:
+        builder.button(
+            text=f"❌ {_cut(label)}",
+            callback_data=f"{ADMIN_PREFIX}:{ADM_REVOKE_INVITE}:{code}",
+        )
+    builder.button(text="➕ Новое", callback_data=f"{ADMIN_PREFIX}:{ADM_NEW_INVITE}:-")
+    builder.button(text="⬅️ Назад", callback_data=f"{ADMIN_PREFIX}:{ADM_MENU}:-")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def admin_entry() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🛠 Панель администратора",
+                    callback_data=f"{ADMIN_PREFIX}:{ADM_MENU}:-",
+                )
+            ]
+        ]
+    )
+
+
+def admin_back() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ В меню", callback_data=f"{ADMIN_PREFIX}:{ADM_MENU}:-")]
+        ]
+    )
+
+
+def parse_admin_callback(data: str | None) -> tuple[str, str] | None:
+    """Разбирает `adm:действие:аргумент`. Аргумент может содержать дефисы (код приглашения)."""
+    if not data or not data.startswith(f"{ADMIN_PREFIX}:"):
+        return None
+    parts = data.split(":", 2)
+    if len(parts) != 3:
+        return None
+    return parts[1], parts[2]
+
+
 def parse_callback(data: str | None) -> tuple[str, str, int] | None:
     """Разбирает `действие:сессия:индекс`. Мусор отбрасывается, а не приводит к ошибке."""
     if not data:

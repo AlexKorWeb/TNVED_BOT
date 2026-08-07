@@ -12,6 +12,7 @@ from html import escape
 from tnved_bot.core.confidence import ConfidenceLevel
 from tnved_bot.core.models import Answer, Candidate
 from tnved_bot.db.nomenclature import format_code
+from tnved_bot.db.users import AllowedUser, Invite
 
 DISCLAIMER = (
     "⚠️ Ответ носит справочный характер. Окончательное решение принимает декларант; "
@@ -139,3 +140,147 @@ def code_not_found(code: str) -> str:
 CODE_FORMAT_HINT = (
     "Укажите код из 10 цифр: <code>/code 8516710000</code> или <code>/code 8516 71 000 0</code>"
 )
+
+# ---------------------------------------------------------------- админ-панель
+
+ADMIN_ONLY = "Панель доступна только администратору."
+
+ADMIN_HINT = (
+    "Вы администратор. Управление доступом — кнопкой ниже или командой /admin.\n\n"
+    "Там же выдача приглашений: код можно создать в один клик, не спрашивая у человека "
+    "его Telegram ID."
+)
+
+ADMIN_FROM_ENV = (
+    "Это администратор из <code>.env</code>.\n\n"
+    "Его доступ отзывается только правкой файла и перезапуском — так задумано: это "
+    "аварийный вход на случай, если список в базе окажется испорчен."
+)
+
+MIN_FREE_MB = 500
+
+
+def admin_menu_text(users: int, invites: int, requests: int) -> str:
+    return (
+        "🛠 <b>Панель администратора</b>\n\n"
+        f"Пользователей с доступом: <b>{users}</b>\n"
+        f"Невостребованных приглашений: <b>{invites}</b>\n"
+        f"Запросов за сутки: <b>{requests}</b>"
+    )
+
+
+def admin_users_text(people: list[AllowedUser], total: int, admins: frozenset[int]) -> str:
+    lines = [f"👥 <b>Пользователи</b> ({total})", ""]
+    if not people:
+        lines.append("Список пуст. Создайте приглашение кнопкой ниже.")
+    for person in people:
+        note = f" — {esc(person.note)}" if person.note else ""
+        seen = person.last_seen_at[:10] if person.last_seen_at else "не заходил"
+        source = "по коду" if person.added_by == 0 else f"выдал {person.added_by}"
+        lines.append(
+            f"<code>{person.user_id}</code>{note}\n"
+            f"    с {person.added_at[:10]}, был {seen}, {source}"
+        )
+    if total > len(people):
+        lines.append(f"\n…и ещё {total - len(people)}. Полный список: /users")
+
+    lines += [
+        "",
+        f"Администраторы из <code>.env</code>: {', '.join(str(a) for a in sorted(admins))}",
+        "Их через панель отозвать нельзя.",
+        "",
+        "Кнопка ниже отзывает доступ.",
+    ]
+    return "\n".join(lines)
+
+
+def admin_confirm_user_text(user_id: int, label: str) -> str:
+    return (
+        "Отозвать доступ?\n\n"
+        f"<code>{user_id}</code> — {esc(label)}\n\n"
+        "Активные диалоги этого пользователя будут закрыты. "
+        "История о том, что доступ был, сохранится."
+    )
+
+
+def admin_user_removed(user_id: int, closed: int, removed: bool) -> str:
+    if not removed:
+        return f"Пользователя <code>{user_id}</code> в списке не было."
+    return f"Доступ отозван: <code>{user_id}</code>. Закрыто диалогов: {closed}."
+
+
+def admin_invites_text(invites: list[Invite], total: int, note: str | None = None) -> str:
+    lines = []
+    if note:
+        lines += [note, ""]
+    lines += [f"🎟 <b>Невостребованные приглашения</b> ({total})", ""]
+
+    if not invites:
+        lines.append("Активных кодов нет.")
+    for invite in invites:
+        label = f" — {esc(invite.note)}" if invite.note else ""
+        lines.append(
+            f"<code>{invite.code}</code>{label}\n    действует до {invite.expires_at[:16]}"
+        )
+
+    if total > len(invites):
+        lines.append(f"\n…и ещё {total - len(invites)}.")
+
+    lines += [
+        "",
+        "Невостребованный код — открытая дверь до истечения срока. "
+        "Лишние лучше отозвать кнопкой ниже.",
+    ]
+    return "\n".join(lines)
+
+
+def invite_created(code: str, ttl_hours: int, bot_username: str | None = None) -> str:
+    handle = f"@{bot_username} " if bot_username else ""
+    return (
+        f"🎟 <b>Код приглашения</b> (действует {ttl_hours} ч)\n\n"
+        f"<code>{code}</code>\n\n"
+        "Перешлите человеку сообщение ниже — нажатие на него копирует текст целиком:\n\n"
+        f"<pre>Открой бота {handle}и отправь ему:\n/start {code}</pre>\n\n"
+        "Код одноразовый. После активации человек появится в списке пользователей."
+    )
+
+
+def admin_stats_text(values: list[tuple[str, int]]) -> str:
+    lines = ["📊 <b>За последние сутки</b>", ""]
+    lines += [f"{name}: <b>{value}</b>" for name, value in values]
+    return "\n".join(lines)
+
+
+async def health_text(nomenclature: object, llm: object, db_path_parent: str) -> str:
+    """Состояние системы. Собирается здесь, чтобы одинаково выглядеть в /health и в панели."""
+    import shutil
+
+    version = await nomenclature.active_version()  # type: ignore[attr-defined]
+    binary = llm.check_binary()  # type: ignore[attr-defined]
+    breaker_open = llm.breaker_open  # type: ignore[attr-defined]
+
+    # Проверка состояния не имеет права падать сама: недоступный каталог — это как раз то,
+    # о чём она должна сообщить, а не то, из-за чего она молчит.
+    try:
+        free_mb = shutil.disk_usage(db_path_parent).free // (1024 * 1024)
+        disk = f"{'🟢' if free_mb >= MIN_FREE_MB else '🔴'} Диск: {free_mb} МБ свободно"
+    except OSError as exc:
+        disk = f"🔴 Диск: путь недоступен ({exc.strerror or exc})"
+
+    return "\n".join(
+        [
+            "🩺 <b>Состояние</b>",
+            "",
+            f"{'🟢' if version else '🔴'} Справочник: "
+            + (f"{version.rows} кодов, {version.source_date or '—'}" if version else "не загружен"),
+            f"{'🟢' if binary else '🔴'} claude: " + (binary or "не найден в PATH"),
+            f"{'🔴' if breaker_open else '🟢'} ИИ: "
+            + (
+                f"недоступен ещё {llm.retry_after_seconds} с"  # type: ignore[attr-defined]
+                if breaker_open
+                else "в норме"
+            ),
+            disk,
+            f"⏳ В очереди к ИИ: {llm.queue_depth}",  # type: ignore[attr-defined]
+        ]
+    )

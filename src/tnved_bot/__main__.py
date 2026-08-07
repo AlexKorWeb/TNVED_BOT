@@ -16,7 +16,7 @@ from types import FrameType
 from pydantic import ValidationError
 
 from tnved_bot import __version__
-from tnved_bot.bot.setup import build, run_polling
+from tnved_bot.bot.setup import build, publish_commands, run_polling
 from tnved_bot.config import Settings, format_config_error, load_settings
 from tnved_bot.core.errors import AlreadyRunningError
 from tnved_bot.db.engine import Database
@@ -86,6 +86,8 @@ async def run(settings: Settings) -> None:
         log.error("nomenclature_not_loaded", hint="scripts/import_nomenclature.py")
     if claude_path is None:
         log.error("claude_not_found", binary=settings.claude_bin)
+
+    await publish_commands(runtime, settings.admin_user_ids)
 
     janitor = Janitor(db, settings)
     await janitor.start(runtime.bot)

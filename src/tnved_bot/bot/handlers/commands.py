@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 from aiogram import Router
@@ -10,7 +9,7 @@ from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import Message
 
 from tnved_bot import __version__
-from tnved_bot.bot import texts
+from tnved_bot.bot import keyboards, texts
 from tnved_bot.core.models import Candidate
 from tnved_bot.db.audit import AuditLog
 from tnved_bot.db.nomenclature import NomenclatureRepository, format_code, normalize_code
@@ -34,6 +33,7 @@ async def cmd_start(
     users: UserRepository,
     audit: AuditLog,
     invite_ttl_hours: int,
+    is_admin: bool = False,
     invite_only: bool = False,
 ) -> None:
     code = (command.args or "").strip()
@@ -45,7 +45,11 @@ async def cmd_start(
         # активации кода, но кода в сообщении не оказалось.
         await message.answer(texts.access_denied(user_id))
         return
+
     await message.answer(texts.START)
+    if is_admin:
+        # Администратору сразу показываем вход в панель: иначе о ней можно не узнать.
+        await message.answer(texts.ADMIN_HINT, reply_markup=keyboards.admin_entry())
 
 
 async def _redeem(
@@ -213,12 +217,18 @@ async def cmd_invite(
         return
     note = (command.args or "").strip() or None
     code = await users.create_invite(user_id, note, invite_ttl_hours)
-    await message.answer(
-        f"Код приглашения (действует {invite_ttl_hours} ч):\n\n"
-        f"<code>{code}</code>\n\n"
-        "Перешлите человеку текст ниже:\n\n"
-        f"<blockquote>Открой бота и отправь ему: /start {code}</blockquote>"
-    )
+    await message.answer(texts.invite_created(code, invite_ttl_hours, await _username(message.bot)))
+
+
+async def _username(bot: object) -> str | None:
+    """Имя бота для готового текста приглашения. `me()` кешируется aiogram."""
+    if bot is None:
+        return None
+    try:
+        me = await bot.me()  # type: ignore[attr-defined]
+    except Exception:  # noqa: BLE001 — без имени текст просто короче
+        return None
+    return str(me.username) if me.username else None
 
 
 async def cmd_health(
@@ -230,23 +240,8 @@ async def cmd_health(
 ) -> None:
     if not await _require_admin(message, is_admin):
         return
-
-    version = await nomenclature.active_version()
-    free_mb = shutil.disk_usage(db_path_parent).free // (1024 * 1024)
-    binary = llm.check_binary()
-
-    lines = [
-        "<b>Состояние</b>",
-        "",
-        f"{'🟢' if version else '🔴'} Справочник: "
-        + (f"{version.rows} кодов" if version else "не загружен"),
-        f"{'🟢' if binary else '🔴'} claude: " + (binary or "не найден в PATH"),
-        f"{'🔴' if llm.breaker_open else '🟢'} ИИ: "
-        + (f"недоступен ещё {llm.retry_after_seconds} с" if llm.breaker_open else "в норме"),
-        f"{'🟢' if free_mb >= MIN_FREE_MB else '🔴'} Диск: {free_mb} МБ свободно",
-        f"⏳ В очереди: {llm.queue_depth}",
-    ]
-    await message.answer("\n".join(lines))
+    # Тот же текст, что и в панели: иначе команда и кнопка со временем разъедутся.
+    await message.answer(await texts.health_text(nomenclature, llm, db_path_parent))
 
 
 async def cmd_stats(message: Message, is_admin: bool, audit: AuditLog) -> None:
