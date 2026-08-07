@@ -18,6 +18,7 @@ from pydantic import ValidationError
 from tnved_bot import __version__
 from tnved_bot.config import Settings, format_config_error, load_settings
 from tnved_bot.core.errors import AlreadyRunningError
+from tnved_bot.db.engine import Database
 from tnved_bot.lockfile import SingleInstanceLock
 from tnved_bot.logging_setup import get_logger, setup_logging
 
@@ -58,20 +59,28 @@ async def run(settings: Settings) -> None:
     shutdown = asyncio.Event()
     _install_signal_handlers(loop, shutdown)
 
+    db = Database(
+        settings.abs_path(settings.db_path),
+        backup_dir=settings.abs_path(settings.backup_dir),
+    )
+    await db.connect()
+
     log.info(
         "bot_started",
         version=__version__,
         python=sys.version.split()[0],
         admins=len(settings.admin_user_ids),
-        db=str(settings.abs_path(settings.db_path)),
+        db=str(db.path),
+        schema=await db.user_version(),
     )
 
-    # T-002…T-009 подключат сюда БД, планировщик и polling. Пока бот просто держится
-    # запущенным, чтобы проверялись старт, лок и graceful shutdown.
+    # T-003…T-009 подключат сюда справочник, планировщик и polling. Пока бот держится
+    # запущенным, чтобы проверялись старт, БД, лок и graceful shutdown.
     try:
         await shutdown.wait()
     finally:
         log.info("bot_stopping")
+        await db.close()
 
 
 def main() -> int:

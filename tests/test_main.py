@@ -107,5 +107,8 @@ def test_starts_and_shuts_down_gracefully(tmp_path: Path) -> None:
     assert "bot_stopped" in content
     assert FAKE_TOKEN not in content
 
+    # БД создаётся при первом старте — отдельного шага установки быть не должно.
+    assert (tmp_path / "db" / "tnved.db").exists()
+
     # Лок освобождён — следующий запуск не требует ручной уборки.
     SingleInstanceLock(tmp_path / "db" / "bot.lock").acquire()
