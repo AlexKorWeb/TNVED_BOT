@@ -34,7 +34,11 @@ class ScriptedClient(LlmClient):
         return sys.executable
 
     def _build_args(self, system: str, allow_read_dir: Path | None) -> list[str]:
-        return [sys.executable, str(self._script)]
+        # `-X utf8`: клиент пишет в stdin строго UTF-8, и настоящий `claude` так его и читает.
+        # Дочерний python без этого флага декодирует stdin в кодировке локали — на машине с
+        # cp1251/cp1252 кириллица превращается в мусор, и тест на stdin падает не из-за кода,
+        # а из-за кодовой страницы раннера. Флаг выравнивает дубль с реальным CLI.
+        return [sys.executable, "-X", "utf8", str(self._script)]
 
 
 # ---------------------------------------------------------------- извлечение JSON
