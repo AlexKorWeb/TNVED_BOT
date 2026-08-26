@@ -9,6 +9,10 @@
 
 - Лицензия MIT (`LICENSE`) и метаданные автора в `pyproject.toml` — репозиторий открыт как
   портфолио, без лицензии код формально нельзя было бы использовать.
+- CI на GitHub Actions (`.github/workflows/ci.yml`): `ruff check`, `ruff format --check`,
+  `mypy`, `pytest` с порогом покрытия 70 % — на `windows-latest`, той платформе, для которой
+  бот написан. Секреты не нужны: тесты не ходят в сеть и не читают `.env`.
+- Логотип бота (`docs/assets/logo.png`) и бейджи CI / Python / лицензии / покрытия в README.
 
 ### Changed
 

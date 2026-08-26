@@ -1,4 +1,11 @@
+<img src="docs/assets/logo.png" alt="Логотип TNVED_BOT" width="140" align="right">
+
 # TNVED_BOT
+
+[![CI](https://github.com/AlexKorWeb/TNVED_BOT/actions/workflows/ci.yml/badge.svg)](https://github.com/AlexKorWeb/TNVED_BOT/actions/workflows/ci.yml)
+[![Python 3.12](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Coverage 87%](https://img.shields.io/badge/coverage-87%25-brightgreen)](#разработка)
 
 Telegram-бот, который подбирает 10-значный код ТН ВЭД ЕАЭС по текстовому описанию товара или
 по фотографии. Работает локально на Windows, обращается к ИИ через CLI `claude -p`.
@@ -219,7 +226,12 @@ pytest tests\test_sanitize.py -v            # защита от инъекций
 ruff check src tests scripts
 ruff format src tests scripts
 mypy src
+pytest -q --cov --cov-report=term-missing   # покрытие: 87 %, порог CI — 70 %
 ```
+
+Те же четыре проверки на каждый push и pull request гоняет
+[GitHub Actions](.github/workflows/ci.yml) на `windows-latest` — на той платформе, для которой
+бот написан. Секреты CI не нужны: тесты не ходят в сеть и не читают `.env`.
 
 ## Диагностика
 

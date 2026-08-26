@@ -1,0 +1,51 @@
+name: CI
+
+# Windows — не прихоть: бот рассчитан на Windows и стартует через планировщик задач.
+# Проверять его на ubuntu значило бы тестировать не ту платформу, на которой он живёт.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: windows-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+
+      - name: Ruff (lint)
+        run: ruff check src tests scripts
+
+      - name: Ruff (format)
+        run: ruff format --check src tests scripts
+
+      - name: Mypy
+        run: mypy src
+
+      # Тесты не ходят в сеть и не читают .env: conftest подменяет окружение
+      # и выставляет REFERENCE_ENABLED=false. Секреты в CI не нужны.
+      - name: Pytest
+        run: pytest -q --cov --cov-report=term-missing --cov-fail-under=70
